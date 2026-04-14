@@ -282,7 +282,7 @@ def _summary(wb, solutions, project, location, date):
             c=ws.cell(row=r,column=3+i,value=formula)
             c.fill=fill(bg); c.border=border(); c.font=fnt(); c.number_format=fmt; c.alignment=aln("right")
         ws.row_dimensions[r].height=16; alt=not alt; r+=1
-    widths(ws,[34,8]+[16]*ns); ws.freeze_panes="A5"
+    widths(ws,[36,10]+[18]*ns); ws.freeze_panes="A5"
 
 def _config(wb, solutions, project, location, date):
     ws=wb.create_sheet("⚙️ Config"); ws.sheet_view.showGridLines=False
@@ -313,7 +313,7 @@ def _load_tab(wb, sol):
     hdr(ws,1,1,10,f"  SCENARIO {n}  |  Monthly Load (kWh)",size=12)
     ws.row_dimensions[1].height=26; ws.row_dimensions[2].height=6
     heads=["Month","Total Load","From Grid","From Genset","From Battery","From Solar","Grid %","Genset %","Battery %","Solar %"]
-    cw=[10,14,13,13,13,13,10,10,10,10]
+    cw=[15,14,13,13,13,13,10,10,10,10]
     for ci,(h,w) in enumerate(zip(heads,cw),1):
         c=ws.cell(row=3,column=ci,value=h); c.fill=fill(); c.border=border()
         c.font=Font(name="Arial",bold=True,color=C_WHITE,size=10); c.alignment=aln("center")
@@ -362,7 +362,7 @@ def _production_tab(wb, sol):
     n=sol['num']; ws=wb.create_sheet(sname(f"Sc {n} – Production",wb)); ws.sheet_view.showGridLines=False
     hdr(ws,1,1,6,f"  SCENARIO {n}  |  Monthly Production (kWh)",size=12)
     ws.row_dimensions[1].height=26; ws.row_dimensions[2].height=6
-    heads=["Month","Production","Self Consumption","Stored BESS","Curtailed","Potential"]; cw=[10,14,16,13,11,14]
+    heads=["Month","Production","Self Consumption","Stored BESS","Curtailed","Potential"]; cw=[15,14,16,13,11,14]
     for ci,(h,w) in enumerate(zip(heads,cw),1):
         c=ws.cell(row=3,column=ci,value=h); c.fill=fill(); c.border=border()
         c.font=Font(name="Arial",bold=True,color=C_WHITE,size=10); c.alignment=aln("center")
@@ -950,20 +950,20 @@ def generate_ppt(excel_path, template_path, progress=None):
     log("Loading template...")
     pf = PptxFiles(template_path)
     template_pairs = len(SCENARIO_SLIDE_PAIRS)
-    active_pairs = list(SCENARIO_SLIDE_PAIRS); active_charts = list(SCENARIO_CHART_GROUPS)
-    if n > template_pairs:
-        for extra_i in range(template_pairs, n):
-            new_tech, new_obs, new_charts = duplicate_scenario_pair(pf, template_pairs-1, extra_i+1, "slide12.xml")
-            active_pairs.append((new_tech, new_obs)); active_charts.append(new_charts)
+    # Always duplicate the last template pair (which has the correct chart formatting)
+    # for every scenario. This ensures all output slides share identical chart styles,
+    # regardless of how many scenarios there are. All original template slides are
+    # later removed by the keep_slides filter below.
+    active_pairs = []; active_charts = []
+    for i in range(n):
+        new_tech, new_obs, new_charts = duplicate_scenario_pair(
+            pf, template_pairs - 1, i + 1, "ZZZNOMATCH.xml"  # no match → append at end
+        )
+        active_pairs.append((new_tech, new_obs)); active_charts.append(new_charts)
     for i in range(n):
         sc = scenarios[i]; tech_slide, obs_slide = active_pairs[i]; chart_group = active_charts[i]
         log(f"Updating Scenario {i+1}: {sc.get('label') or '(unnamed)'}...")
         update_scenario_technical(pf, tech_slide, chart_group, sc, i+1)
-    if n < template_pairs:
-        for i in range(template_pairs-1, n-1, -1):
-            tech_slide, obs_slide = SCENARIO_SLIDE_PAIRS[i]
-            remove_slide_from_presentation(pf, obs_slide)
-            remove_slide_from_presentation(pf, tech_slide)
     update_cover(pf, info)
     keep_slides = set()
     for tech_slide, _obs_slide in active_pairs[:n]:
