@@ -543,18 +543,9 @@ class PptxFiles:
         with zipfile.ZipFile(output_path, 'w', zipfile.ZIP_DEFLATED) as zf:
             for name, data in self.files.items(): zf.writestr(name, data)
     def save_to_bytes(self):
-        # Only prune [Content_Types].xml Override entries for files removed from the zip.
-        # All other file contents are written verbatim — no re-serialization of chart files here,
-        # to avoid namespace-prefix corruption on files that weren't explicitly set_xml()'d.
-        CT_NS = "http://schemas.openxmlformats.org/package/2006/content-types"
-        ct_data = self.files.get('[Content_Types].xml')
-        if ct_data:
-            ct_root = etree.fromstring(ct_data)
-            for ov in ct_root.findall(f"{{{CT_NS}}}Override"):
-                part = ov.get("PartName", "").lstrip("/")
-                if part and part not in self.files:
-                    ct_root.remove(ov)
-            self.files['[Content_Types].xml'] = etree.tostring(ct_root, xml_declaration=True, encoding="UTF-8", standalone=True)
+        # Write the zip verbatim — no XML manipulation at all.
+        # Mirrors the original save() exactly; any lxml re-serialization here
+        # risks corrupting namespace declarations that PowerPoint requires verbatim.
         buf = BytesIO()
         with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
             for name, data in self.files.items(): zf.writestr(name, data)
@@ -950,20 +941,31 @@ def generate_ppt(excel_path, template_path, progress=None):
     log("Loading template...")
     pf = PptxFiles(template_path)
     template_pairs = len(SCENARIO_SLIDE_PAIRS)
-    # Always duplicate the last template pair (which has the correct chart formatting)
-    # for every scenario. This ensures all output slides share identical chart styles,
-    # regardless of how many scenarios there are. All original template slides are
-    # later removed by the keep_slides filter below.
-    active_pairs = []; active_charts = []
-    for i in range(n):
-        new_tech, new_obs, new_charts = duplicate_scenario_pair(
-            pf, template_pairs - 1, i + 1, "ZZZNOMATCH.xml"  # no match → append at end
-        )
-        active_pairs.append((new_tech, new_obs)); active_charts.append(new_charts)
+    active_pairs = list(SCENARIO_SLIDE_PAIRS); active_charts = list(SCENARIO_CHART_GROUPS)
+    # Normalise chart formatting: overwrite any earlier template pair's chart bytes
+    # with the last pair's bytes before updating data. This makes all output slides
+    # share the same chart structure/styles as the last (always-correct) template slide.
+    # Uses existing chart file names so [Content_Types].xml never needs touching.
+    last_charts = SCENARIO_CHART_GROUPS[template_pairs - 1]
+    for i in range(min(n, template_pairs - 1)):
+        for src_c, dst_c in zip(last_charts, SCENARIO_CHART_GROUPS[i]):
+            pf.copy_file(f"ppt/charts/{src_c}", f"ppt/charts/{dst_c}")
+            src_rels = f"ppt/charts/_rels/{src_c}.rels"
+            dst_rels = f"ppt/charts/_rels/{dst_c}.rels"
+            if pf.has(src_rels): pf.copy_file(src_rels, dst_rels)
+    if n > template_pairs:
+        for extra_i in range(template_pairs, n):
+            new_tech, new_obs, new_charts = duplicate_scenario_pair(pf, template_pairs-1, extra_i+1, "ZZZNOMATCH.xml")
+            active_pairs.append((new_tech, new_obs)); active_charts.append(new_charts)
     for i in range(n):
         sc = scenarios[i]; tech_slide, obs_slide = active_pairs[i]; chart_group = active_charts[i]
         log(f"Updating Scenario {i+1}: {sc.get('label') or '(unnamed)'}...")
         update_scenario_technical(pf, tech_slide, chart_group, sc, i+1)
+    if n < template_pairs:
+        for i in range(template_pairs-1, n-1, -1):
+            tech_slide, obs_slide = SCENARIO_SLIDE_PAIRS[i]
+            remove_slide_from_presentation(pf, obs_slide)
+            remove_slide_from_presentation(pf, tech_slide)
     update_cover(pf, info)
     keep_slides = set()
     for tech_slide, _obs_slide in active_pairs[:n]:
