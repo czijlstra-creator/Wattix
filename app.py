@@ -917,7 +917,6 @@ def generate_ppt(excel_path, template_path, progress=None):
         sc = scenarios[i]; tech_slide, obs_slide = active_pairs[i]; chart_group = active_charts[i]
         log(f"Updating Scenario {i+1}: {sc.get('label') or '(unnamed)'}...")
         update_scenario_technical(pf, tech_slide, chart_group, sc, i+1)
-        update_scenario_observations(pf, obs_slide, sc, i+1)
     if n < template_pairs:
         for i in range(template_pairs-1, n-1, -1):
             tech_slide, obs_slide = SCENARIO_SLIDE_PAIRS[i]
@@ -925,7 +924,8 @@ def generate_ppt(excel_path, template_path, progress=None):
             remove_slide_from_presentation(pf, tech_slide)
     update_cover(pf, info)
     keep_slides = set()
-    for tech_slide, _obs_slide in active_pairs[:n]: keep_slides.add(tech_slide)
+    for tech_slide, _obs_slide in active_pairs[:n]:
+        keep_slides.add(tech_slide)
     prs_rels_root = pf.get_xml("ppt/_rels/presentation.xml.rels")
     rels_map = {r.get("Id"): r.get("Target","").split("/")[-1]
                 for r in prs_rels_root.findall(f"{{{NS_PKG}}}Relationship")
