@@ -219,7 +219,6 @@ def build_excel(solutions, project, location, date, outpath):
     _config(wb, solutions, project, location, date)
     for sol in solutions:
         _load_tab(wb, sol); _production_tab(wb, sol)
-        if sol.get('site_df') is not None: _sheet_15min(wb, sol)
     wb.save(outpath)
 
 def _summary(wb, solutions, project, location, date):
@@ -703,9 +702,9 @@ def _build_dLbl_right(color_hex, val, is_scheme=False):
         return dLbls
     dLbl = etree.SubElement(dLbls, _c("dLbl"))
     etree.SubElement(dLbl, _c("idx")).set("val", "0")
-    layout = etree.SubElement(dLbl, _c("layout"))
-    ml = etree.SubElement(layout, _c("manualLayout"))
-    etree.SubElement(ml, _c("x")).set("val", "-0.23"); etree.SubElement(ml, _c("y")).set("val", "0")
+    # No manualLayout — use outEnd so PowerPoint auto-positions the label
+    # cleanly at the outside end of each bar segment. No clipping, works for
+    # any bar size or data value.
     spPr = etree.SubElement(dLbl, _c("spPr"))
     etree.SubElement(spPr, _a("noFill"))
     ln = etree.SubElement(spPr, _a("ln")); etree.SubElement(ln, _a("noFill"))
@@ -727,7 +726,7 @@ def _build_dLbl_right(color_hex, val, is_scheme=False):
     etree.SubElement(defRPr, _a("latin")).set("typeface","Poppins")
     etree.SubElement(defRPr, _a("cs")).set("typeface","Poppins")
     etree.SubElement(p, _a("endParaRPr")).set("lang","en-US")
-    etree.SubElement(dLbl, _c("dLblPos")).set("val","ctr")
+    etree.SubElement(dLbl, _c("dLblPos")).set("val","outEnd")
     for tag, v in [("showLegendKey","0"),("showVal","1"),("showCatName","0"),("showSerName","0"),("showPercent","0"),("showBubbleSize","0"),("showLeaderLines","0")]:
         etree.SubElement(dLbl, _c(tag)).set("val", v)
     for tag, v in [("showLegendKey","0"),("showVal","1"),("showCatName","0"),("showSerName","0"),("showPercent","0"),("showBubbleSize","0"),("showLeaderLines","0")]:
