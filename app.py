@@ -543,6 +543,21 @@ class PptxFiles:
         with zipfile.ZipFile(output_path, 'w', zipfile.ZIP_DEFLATED) as zf:
             for name, data in self.files.items(): zf.writestr(name, data)
     def save_to_bytes(self):
+        PKG_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
+        C_NS   = "http://schemas.openxmlformats.org/drawingml/2006/chart"
+        # Strip external data links from all charts (SharePoint/OneDrive refs that break PowerPoint)
+        for path in list(self.files):
+            if re.match(r"ppt/charts/chart\d+\.xml$", path):
+                root = etree.fromstring(self.files[path])
+                for ext in root.findall(f".//{{{C_NS}}}externalData"):
+                    ext.getparent().remove(ext)
+                self.files[path] = etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
+            elif re.match(r"ppt/charts/_rels/chart\d+\.xml\.rels$", path):
+                root = etree.fromstring(self.files[path])
+                for rel in root.findall(f"{{{PKG_NS}}}Relationship"):
+                    if rel.get("TargetMode") == "External":
+                        root.remove(rel)
+                self.files[path] = etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
         # Remove [Content_Types].xml Override entries for files that no longer exist
         CT_NS = "http://schemas.openxmlformats.org/package/2006/content-types"
         ct_data = self.files.get('[Content_Types].xml')
@@ -950,75 +965,78 @@ def generate_ppt(excel_path, template_path, progress=None):
 #  STREAMLIT UI
 # ══════════════════════════════════════════════════════════════════════════════
 
+import base64 as _b64
+_logo_path = os.path.join(SCRIPT_DIR, "bluepeak_logo.png")
+_logo_b64 = ""
+if os.path.exists(_logo_path):
+    with open(_logo_path, "rb") as _f: _logo_b64 = _b64.b64encode(_f.read()).decode()
+
 st.set_page_config(page_title="Bluepeak | Wattix Tools", page_icon="⚡", layout="centered")
 
-st.markdown("""
+st.markdown(f"""
 <style>
 /* ── Page background ── */
-.stApp { background-color: #f5faf7; }
+.stApp {{ background-color: #f0f6fb; }}
 
 /* ── Header banner ── */
-.bp-header {
-    background: linear-gradient(135deg, #1B4332 0%, #2D6A4F 100%);
-    padding: 20px 28px 16px 28px; border-radius: 10px; margin-bottom: 28px;
-    box-shadow: 0 2px 8px rgba(27,67,50,0.18);
-}
+.bp-header {{
+    background: linear-gradient(135deg, #012540 0%, #034C81 100%);
+    padding: 18px 28px 16px 28px; border-radius: 10px; margin-bottom: 24px;
+    box-shadow: 0 3px 10px rgba(1,37,64,0.25);
+    display: flex; align-items: center; gap: 20px;
+}}
+.bp-header img {{ height: 38px; filter: brightness(0) invert(1); }}
+.bp-header-text {{ color: white; font-size: 13px; opacity: 0.75; margin-top: 3px; font-family: Arial; }}
 
 /* ── Tabs ── */
-.stTabs [data-baseweb="tab-list"] { gap: 4px; border-bottom: 2px solid #D8F3DC; }
-.stTabs [data-baseweb="tab"] {
-    background-color: #eaf4ee; border-radius: 6px 6px 0 0;
-    color: #1B4332; font-weight: 600; padding: 8px 20px;
-    border: 1px solid #b7e4c7; border-bottom: none;
-}
-.stTabs [aria-selected="true"] {
-    background-color: #1B4332 !important; color: white !important;
-    border-color: #1B4332 !important;
-}
-.stTabs [data-baseweb="tab"]:hover { background-color: #40916C; color: white; }
+.stTabs [data-baseweb="tab-list"] {{ gap: 4px; border-bottom: 2px solid #B2E0FF; }}
+.stTabs [data-baseweb="tab"] {{
+    background-color: #e6f2f8; border-radius: 6px 6px 0 0;
+    color: #012540; font-weight: 600; padding: 8px 20px;
+    border: 1px solid #B2E0FF; border-bottom: none;
+}}
+.stTabs [aria-selected="true"] {{
+    background-color: #034C81 !important; color: white !important;
+    border-color: #034C81 !important;
+}}
+.stTabs [data-baseweb="tab"]:hover {{ background-color: #1DB4C5; color: white; }}
 
 /* ── Primary buttons ── */
-div.stButton > button[kind="primary"] {
-    background-color: #1B4332; color: white; border: none;
+div.stButton > button[kind="primary"] {{
+    background-color: #034C81; color: white; border: none;
     border-radius: 6px; font-weight: 600; letter-spacing: 0.3px;
     transition: background 0.2s;
-}
-div.stButton > button[kind="primary"]:hover { background-color: #40916C; color: white; }
-div.stButton > button[kind="primary"]:active { background-color: #0d2b1f; }
+}}
+div.stButton > button[kind="primary"]:hover {{ background-color: #1DB4C5; color: white; }}
+div.stButton > button[kind="primary"]:active {{ background-color: #012540; }}
 
 /* ── Secondary / clear button ── */
-div.stButton > button[kind="secondary"] {
-    border: 1px solid #40916C; color: #1B4332; border-radius: 6px; font-weight: 500;
-}
-div.stButton > button[kind="secondary"]:hover { background-color: #D8F3DC; }
+div.stButton > button[kind="secondary"] {{
+    border: 1px solid #034C81; color: #034C81; border-radius: 6px; font-weight: 500;
+}}
+div.stButton > button[kind="secondary"]:hover {{ background-color: #e6f2f8; }}
 
 /* ── Download button ── */
-div.stDownloadButton > button {
-    background-color: #40916C; color: white; border: none;
+div.stDownloadButton > button {{
+    background-color: #15A781; color: white; border: none;
     border-radius: 6px; font-weight: 600;
-}
-div.stDownloadButton > button:hover { background-color: #2D6A4F; color: white; }
+}}
+div.stDownloadButton > button:hover {{ background-color: #0d8a6a; color: white; }}
 
 /* ── Inputs ── */
-div[data-testid="stTextInput"] input:focus { border-color: #40916C; box-shadow: 0 0 0 1px #40916C; }
-
-/* ── Success / warning / error boxes ── */
-div[data-testid="stAlert"][data-baseweb="notification"] { border-radius: 6px; }
+div[data-testid="stTextInput"] input:focus {{ border-color: #034C81; box-shadow: 0 0 0 1px #034C81; }}
 
 /* ── Divider ── */
-hr { border-top: 1px solid #D8F3DC !important; }
+hr {{ border-top: 1px solid #B2E0FF !important; }}
 
 /* ── Section labels ── */
-.bp-section { color: #1B4332; font-weight: 700; font-size: 14px;
-    border-left: 3px solid #40916C; padding-left: 8px; margin: 4px 0 10px 0; }
-
-/* ── Spinner ── */
-div[data-testid="stSpinner"] { color: #1B4332; }
+.bp-section {{ color: #012540; font-weight: 700; font-size: 14px;
+    border-left: 3px solid #1DB4C5; padding-left: 8px; margin: 4px 0 10px 0; }}
 </style>
 
 <div class="bp-header">
-  <span style="color:white;font-size:22px;font-weight:700;">⚡ Bluepeak  |  Wattix Tools</span><br>
-  <span style="color:#95D5B2;font-size:13px;">bluepeak.energy</span>
+  {"<img src='data:image/png;base64," + _logo_b64 + "' />" if _logo_b64 else "<span style='color:white;font-size:20px;font-weight:700;'>⚡ bluepeak.energy</span>"}
+  <div><div class="bp-header-text">Wattix Tools</div></div>
 </div>
 """, unsafe_allow_html=True)
 
