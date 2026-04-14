@@ -543,22 +543,9 @@ class PptxFiles:
         with zipfile.ZipFile(output_path, 'w', zipfile.ZIP_DEFLATED) as zf:
             for name, data in self.files.items(): zf.writestr(name, data)
     def save_to_bytes(self):
-        PKG_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
-        C_NS   = "http://schemas.openxmlformats.org/drawingml/2006/chart"
-        # Strip external data links from all charts (SharePoint/OneDrive refs that break PowerPoint)
-        for path in list(self.files):
-            if re.match(r"ppt/charts/chart\d+\.xml$", path):
-                root = etree.fromstring(self.files[path])
-                for ext in root.findall(f".//{{{C_NS}}}externalData"):
-                    ext.getparent().remove(ext)
-                self.files[path] = etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
-            elif re.match(r"ppt/charts/_rels/chart\d+\.xml\.rels$", path):
-                root = etree.fromstring(self.files[path])
-                for rel in root.findall(f"{{{PKG_NS}}}Relationship"):
-                    if rel.get("TargetMode") == "External":
-                        root.remove(rel)
-                self.files[path] = etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
-        # Remove [Content_Types].xml Override entries for files that no longer exist
+        # Only prune [Content_Types].xml Override entries for files removed from the zip.
+        # All other file contents are written verbatim — no re-serialization of chart files here,
+        # to avoid namespace-prefix corruption on files that weren't explicitly set_xml()'d.
         CT_NS = "http://schemas.openxmlformats.org/package/2006/content-types"
         ct_data = self.files.get('[Content_Types].xml')
         if ct_data:
@@ -799,8 +786,38 @@ def hide_zero_series_in_legend(pf, chart_name):
             legend.insert(0, le)
     pf.set_xml(f"ppt/charts/{chart_name}", root)
 
+def _strip_chart_external_data(pf, chart_name):
+    """
+    Remove c:externalData element and any External-mode rels from a chart file.
+    Call this before updating a chart so the stripping happens within the same
+    set_xml() pass, avoiding a second lxml round-trip in save_to_bytes().
+    """
+    C_NS   = "http://schemas.openxmlformats.org/drawingml/2006/chart"
+    PKG_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
+    # Strip c:externalData from chart XML
+    chart_path = f"ppt/charts/{chart_name}"
+    if pf.has(chart_path):
+        root = pf.get_xml(chart_path)
+        for ext in root.findall(f".//{{{C_NS}}}externalData"):
+            ext.getparent().remove(ext)
+        pf.set_xml(chart_path, root)
+    # Strip External rels from chart rels file
+    rels_path = f"ppt/charts/_rels/{chart_name}.rels"
+    if pf.has(rels_path):
+        rels_root = pf.get_xml(rels_path)
+        changed = False
+        for rel in rels_root.findall(f"{{{PKG_NS}}}Relationship"):
+            if rel.get("TargetMode") == "External":
+                rels_root.remove(rel); changed = True
+        if changed:
+            pf.set_xml(rels_path, rels_root)
+
+
 def update_scenario_charts(pf, chart_group, sc):
     months = sc.get("months") or MONTHS; label = sc.get("label") or "Annual"
+    # Strip external data refs before touching each chart (avoids blanket re-serialization in save_to_bytes)
+    for chart_name in chart_group:
+        _strip_chart_external_data(pf, chart_name)
     for chart_name in [chart_group[0], chart_group[2]]: fix_chart_legend(pf, chart_name)
     update_chart_title(pf, chart_group[0], "Energy use")
     update_chart_title(pf, chart_group[2], "Solar PV production")
