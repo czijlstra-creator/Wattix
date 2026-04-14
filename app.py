@@ -543,9 +543,26 @@ class PptxFiles:
         with zipfile.ZipFile(output_path, 'w', zipfile.ZIP_DEFLATED) as zf:
             for name, data in self.files.items(): zf.writestr(name, data)
     def save_to_bytes(self):
-        # Write the zip verbatim — no XML manipulation at all.
-        # Mirrors the original save() exactly; any lxml re-serialization here
-        # risks corrupting namespace declarations that PowerPoint requires verbatim.
+        # Prune [Content_Types].xml: remove Override entries for parts that were
+        # deleted (removed slides, charts, notes). PowerPoint rejects the package
+        # if Content_Types references files that don't exist in the zip.
+        # We restore the original XML declaration verbatim so lxml's single-quote
+        # serialisation doesn't confuse PowerPoint's strict parser.
+        CT_NS = "http://schemas.openxmlformats.org/package/2006/content-types"
+        ct_data = self.files.get('[Content_Types].xml')
+        if ct_data:
+            # Capture original declaration (preserves encoding, quotes, line ending)
+            decl_match = re.match(rb'<\?xml[^?]*\?>', ct_data)
+            orig_decl = decl_match.group(0) if decl_match else b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            ct_root = etree.fromstring(ct_data)
+            for ov in ct_root.findall(f'{{{CT_NS}}}Override'):
+                part = ov.get('PartName', '').lstrip('/')
+                if part and part not in self.files:
+                    ct_root.remove(ov)
+            ct_fixed = etree.tostring(ct_root, xml_declaration=True, encoding='UTF-8', standalone=True)
+            # Restore original declaration to avoid lxml single-quote vs double-quote drift
+            ct_fixed = re.sub(rb'^<\?xml[^?]*\?>', orig_decl, ct_fixed)
+            self.files['[Content_Types].xml'] = ct_fixed
         buf = BytesIO()
         with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
             for name, data in self.files.items(): zf.writestr(name, data)
