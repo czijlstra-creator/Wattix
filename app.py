@@ -543,26 +543,10 @@ class PptxFiles:
         with zipfile.ZipFile(output_path, 'w', zipfile.ZIP_DEFLATED) as zf:
             for name, data in self.files.items(): zf.writestr(name, data)
     def save_to_bytes(self):
-        # Prune [Content_Types].xml: remove Override entries for parts that were
-        # deleted (removed slides, charts, notes). PowerPoint rejects the package
-        # if Content_Types references files that don't exist in the zip.
-        # We restore the original XML declaration verbatim so lxml's single-quote
-        # serialisation doesn't confuse PowerPoint's strict parser.
-        CT_NS = "http://schemas.openxmlformats.org/package/2006/content-types"
-        ct_data = self.files.get('[Content_Types].xml')
-        if ct_data:
-            # Capture original declaration (preserves encoding, quotes, line ending)
-            decl_match = re.match(rb'<\?xml[^?]*\?>', ct_data)
-            orig_decl = decl_match.group(0) if decl_match else b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-            ct_root = etree.fromstring(ct_data)
-            for ov in ct_root.findall(f'{{{CT_NS}}}Override'):
-                part = ov.get('PartName', '').lstrip('/')
-                if part and part not in self.files:
-                    ct_root.remove(ov)
-            ct_fixed = etree.tostring(ct_root, xml_declaration=True, encoding='UTF-8', standalone=True)
-            # Restore original declaration to avoid lxml single-quote vs double-quote drift
-            ct_fixed = re.sub(rb'^<\?xml[^?]*\?>', orig_decl, ct_fixed)
-            self.files['[Content_Types].xml'] = ct_fixed
+        # Write zip verbatim — identical to the original save() except output goes
+        # to BytesIO. No XML manipulation: the original working script never touches
+        # [Content_Types].xml or chart rels on save, and PowerPoint tolerates orphaned
+        # Override entries for removed slides.
         buf = BytesIO()
         with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
             for name, data in self.files.items(): zf.writestr(name, data)
@@ -794,38 +778,8 @@ def hide_zero_series_in_legend(pf, chart_name):
             legend.insert(0, le)
     pf.set_xml(f"ppt/charts/{chart_name}", root)
 
-def _strip_chart_external_data(pf, chart_name):
-    """
-    Remove c:externalData element and any External-mode rels from a chart file.
-    Call this before updating a chart so the stripping happens within the same
-    set_xml() pass, avoiding a second lxml round-trip in save_to_bytes().
-    """
-    C_NS   = "http://schemas.openxmlformats.org/drawingml/2006/chart"
-    PKG_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
-    # Strip c:externalData from chart XML
-    chart_path = f"ppt/charts/{chart_name}"
-    if pf.has(chart_path):
-        root = pf.get_xml(chart_path)
-        for ext in root.findall(f".//{{{C_NS}}}externalData"):
-            ext.getparent().remove(ext)
-        pf.set_xml(chart_path, root)
-    # Strip External rels from chart rels file
-    rels_path = f"ppt/charts/_rels/{chart_name}.rels"
-    if pf.has(rels_path):
-        rels_root = pf.get_xml(rels_path)
-        changed = False
-        for rel in rels_root.findall(f"{{{PKG_NS}}}Relationship"):
-            if rel.get("TargetMode") == "External":
-                rels_root.remove(rel); changed = True
-        if changed:
-            pf.set_xml(rels_path, rels_root)
-
-
 def update_scenario_charts(pf, chart_group, sc):
     months = sc.get("months") or MONTHS; label = sc.get("label") or "Annual"
-    # Strip external data refs before touching each chart (avoids blanket re-serialization in save_to_bytes)
-    for chart_name in chart_group:
-        _strip_chart_external_data(pf, chart_name)
     for chart_name in [chart_group[0], chart_group[2]]: fix_chart_legend(pf, chart_name)
     update_chart_title(pf, chart_group[0], "Energy use")
     update_chart_title(pf, chart_group[2], "Solar PV production")
