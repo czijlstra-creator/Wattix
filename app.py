@@ -543,6 +543,16 @@ class PptxFiles:
         with zipfile.ZipFile(output_path, 'w', zipfile.ZIP_DEFLATED) as zf:
             for name, data in self.files.items(): zf.writestr(name, data)
     def save_to_bytes(self):
+        # Remove [Content_Types].xml Override entries for files that no longer exist
+        CT_NS = "http://schemas.openxmlformats.org/package/2006/content-types"
+        ct_data = self.files.get('[Content_Types].xml')
+        if ct_data:
+            ct_root = etree.fromstring(ct_data)
+            for ov in ct_root.findall(f"{{{CT_NS}}}Override"):
+                part = ov.get("PartName", "").lstrip("/")
+                if part and part not in self.files:
+                    ct_root.remove(ov)
+            self.files['[Content_Types].xml'] = etree.tostring(ct_root, xml_declaration=True, encoding="UTF-8", standalone=True)
         buf = BytesIO()
         with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
             for name, data in self.files.items(): zf.writestr(name, data)
@@ -943,7 +953,70 @@ def generate_ppt(excel_path, template_path, progress=None):
 st.set_page_config(page_title="Bluepeak | Wattix Tools", page_icon="⚡", layout="centered")
 
 st.markdown("""
-<div style="background:#1B4332;padding:18px 24px 14px 24px;border-radius:8px;margin-bottom:24px;">
+<style>
+/* ── Page background ── */
+.stApp { background-color: #f5faf7; }
+
+/* ── Header banner ── */
+.bp-header {
+    background: linear-gradient(135deg, #1B4332 0%, #2D6A4F 100%);
+    padding: 20px 28px 16px 28px; border-radius: 10px; margin-bottom: 28px;
+    box-shadow: 0 2px 8px rgba(27,67,50,0.18);
+}
+
+/* ── Tabs ── */
+.stTabs [data-baseweb="tab-list"] { gap: 4px; border-bottom: 2px solid #D8F3DC; }
+.stTabs [data-baseweb="tab"] {
+    background-color: #eaf4ee; border-radius: 6px 6px 0 0;
+    color: #1B4332; font-weight: 600; padding: 8px 20px;
+    border: 1px solid #b7e4c7; border-bottom: none;
+}
+.stTabs [aria-selected="true"] {
+    background-color: #1B4332 !important; color: white !important;
+    border-color: #1B4332 !important;
+}
+.stTabs [data-baseweb="tab"]:hover { background-color: #40916C; color: white; }
+
+/* ── Primary buttons ── */
+div.stButton > button[kind="primary"] {
+    background-color: #1B4332; color: white; border: none;
+    border-radius: 6px; font-weight: 600; letter-spacing: 0.3px;
+    transition: background 0.2s;
+}
+div.stButton > button[kind="primary"]:hover { background-color: #40916C; color: white; }
+div.stButton > button[kind="primary"]:active { background-color: #0d2b1f; }
+
+/* ── Secondary / clear button ── */
+div.stButton > button[kind="secondary"] {
+    border: 1px solid #40916C; color: #1B4332; border-radius: 6px; font-weight: 500;
+}
+div.stButton > button[kind="secondary"]:hover { background-color: #D8F3DC; }
+
+/* ── Download button ── */
+div.stDownloadButton > button {
+    background-color: #40916C; color: white; border: none;
+    border-radius: 6px; font-weight: 600;
+}
+div.stDownloadButton > button:hover { background-color: #2D6A4F; color: white; }
+
+/* ── Inputs ── */
+div[data-testid="stTextInput"] input:focus { border-color: #40916C; box-shadow: 0 0 0 1px #40916C; }
+
+/* ── Success / warning / error boxes ── */
+div[data-testid="stAlert"][data-baseweb="notification"] { border-radius: 6px; }
+
+/* ── Divider ── */
+hr { border-top: 1px solid #D8F3DC !important; }
+
+/* ── Section labels ── */
+.bp-section { color: #1B4332; font-weight: 700; font-size: 14px;
+    border-left: 3px solid #40916C; padding-left: 8px; margin: 4px 0 10px 0; }
+
+/* ── Spinner ── */
+div[data-testid="stSpinner"] { color: #1B4332; }
+</style>
+
+<div class="bp-header">
   <span style="color:white;font-size:22px;font-weight:700;">⚡ Bluepeak  |  Wattix Tools</span><br>
   <span style="color:#95D5B2;font-size:13px;">bluepeak.energy</span>
 </div>
@@ -954,13 +1027,22 @@ tab1, tab2 = st.tabs(["📊 Excel Generator", "📑 PowerPoint Generator"])
 
 # ── Tab 1: Excel Generator ────────────────────────────────────────────────────
 with tab1:
-    st.markdown("**1 — Upload your Wattix files**")
-    st.caption("CSV or XLSX — load, production, generation, site profile. Upload all files for your scenarios at once.")
+    if "xl_uploader_key" not in st.session_state: st.session_state["xl_uploader_key"] = 0
 
-    uploaded_files = st.file_uploader(
-        "Wattix files", accept_multiple_files=True, type=["csv","xlsx"],
-        label_visibility="collapsed", key="excel_uploader"
-    )
+    st.markdown('<div class="bp-section">1 — Upload your Wattix files</div>', unsafe_allow_html=True)
+    st.caption("CSV or XLSX — load, production, generation. Upload all files for your scenarios at once.")
+
+    col_up, col_clr = st.columns([6, 1])
+    with col_up:
+        uploaded_files = st.file_uploader(
+            "Wattix files", accept_multiple_files=True, type=["csv","xlsx"],
+            label_visibility="collapsed", key=f"excel_uploader_{st.session_state['xl_uploader_key']}"
+        )
+    with col_clr:
+        st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+        if st.button("🗑️ Clear", key="xl_clear", help="Remove all uploaded files"):
+            st.session_state["xl_uploader_key"] += 1
+            st.rerun()
 
     if uploaded_files:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -977,14 +1059,14 @@ with tab1:
             st.warning("No Wattix scenarios detected. Make sure filenames contain 'wattix' and 'load' or 'production'.")
 
     st.divider()
-    st.markdown("**2 — Project details**")
+    st.markdown('<div class="bp-section">2 — Project details</div>', unsafe_allow_html=True)
     c1, c2, c3 = st.columns(3)
     with c1: project = st.text_input("Project name", placeholder="e.g. VWLD Amstelveen", key="xl_project")
     with c2: location = st.text_input("Location", placeholder="e.g. Amstelveen, NL", key="xl_location")
     with c3: report_date = st.text_input("Report date", value=datetime.today().strftime("%d %b %Y"), key="xl_date")
 
     st.divider()
-    st.markdown("**3 — Generate**")
+    st.markdown('<div class="bp-section">3 — Generate</div>', unsafe_allow_html=True)
 
     if st.button("⚡  Generate Excel", type="primary", use_container_width=True):
         if not uploaded_files:
@@ -1023,8 +1105,8 @@ with tab1:
 
 # ── Tab 2: PowerPoint Generator ───────────────────────────────────────────────
 with tab2:
-    st.markdown("**1 — Upload your Bluepeak Excel output**")
-    st.caption("Upload the Excel file generated by the Excel Generator tab (must have the ⚙️ Config sheet filled in).")
+    st.markdown('<div class="bp-section">1 — Upload your Bluepeak Excel output</div>', unsafe_allow_html=True)
+    st.caption("Upload the Excel file generated by the Excel Generator tab.")
 
     excel_file = st.file_uploader(
         "Bluepeak Excel file", type=["xlsx"],
@@ -1035,7 +1117,7 @@ with tab2:
         st.success(f"✓  {excel_file.name} loaded")
 
     st.divider()
-    st.markdown("**2 — Generate**")
+    st.markdown('<div class="bp-section">2 — Generate</div>', unsafe_allow_html=True)
 
     template_ok = os.path.exists(TEMPLATE_PATH)
     if not template_ok:
