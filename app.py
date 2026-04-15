@@ -706,17 +706,20 @@ def _build_dLbl_right(color_hex, val, is_scheme=False):
         return dLbls
     dLbl = etree.SubElement(dLbls, _c("dLbl"))
     etree.SubElement(dLbl, _c("idx")).set("val", "0")
-    # No manualLayout — use outEnd so PowerPoint auto-positions the label
-    # cleanly at the outside end of each bar segment. No clipping, works for
-    # any bar size or data value.
+    # manualLayout: x≈-0.23 shifts label to the right of the bar,
+    # y=0 keeps it vertically centred. Matches original template convention.
+    layout = etree.SubElement(dLbl, _c("layout"))
+    ml = etree.SubElement(layout, _c("manualLayout"))
+    etree.SubElement(ml, _c("x")).set("val", "-0.23")
+    etree.SubElement(ml, _c("y")).set("val", "0")
     spPr = etree.SubElement(dLbl, _c("spPr"))
     etree.SubElement(spPr, _a("noFill"))
     ln = etree.SubElement(spPr, _a("ln")); etree.SubElement(ln, _a("noFill"))
     etree.SubElement(spPr, _a("effectLst"))
     txPr = etree.SubElement(dLbl, _c("txPr"))
     bodyPr = etree.SubElement(txPr, _a("bodyPr"))
-    bodyPr.set("wrap","none"); bodyPr.set("lIns","0"); bodyPr.set("tIns","0")
-    bodyPr.set("rIns","0"); bodyPr.set("bIns","0"); bodyPr.set("anchor","ctr")
+    bodyPr.set("wrap","none"); bodyPr.set("lIns","38100"); bodyPr.set("tIns","19050")
+    bodyPr.set("rIns","38100"); bodyPr.set("bIns","19050"); bodyPr.set("anchor","ctr")
     etree.SubElement(bodyPr, _a("spAutoFit")); etree.SubElement(txPr, _a("lstStyle"))
     p = etree.SubElement(txPr, _a("p"))
     pPr = etree.SubElement(p, _a("pPr")); defRPr = etree.SubElement(pPr, _a("defRPr"))
@@ -730,7 +733,7 @@ def _build_dLbl_right(color_hex, val, is_scheme=False):
     etree.SubElement(defRPr, _a("latin")).set("typeface","Poppins")
     etree.SubElement(defRPr, _a("cs")).set("typeface","Poppins")
     etree.SubElement(p, _a("endParaRPr")).set("lang","en-US")
-    etree.SubElement(dLbl, _c("dLblPos")).set("val","outEnd")
+    etree.SubElement(dLbl, _c("dLblPos")).set("val","ctr")
     for tag, v in [("showLegendKey","0"),("showVal","1"),("showCatName","0"),("showSerName","0"),("showPercent","0"),("showBubbleSize","0"),("showLeaderLines","0")]:
         etree.SubElement(dLbl, _c(tag)).set("val", v)
     for tag, v in [("showLegendKey","0"),("showVal","1"),("showCatName","0"),("showSerName","0"),("showPercent","0"),("showBubbleSize","0"),("showLeaderLines","0")]:
@@ -792,6 +795,16 @@ def update_scenario_charts(pf, chart_group, sc):
     clean_annual_chart_labels(pf, chart_group[3])
     hide_zero_series_in_legend(pf, chart_group[2])
 
+def _remove_content_type(pf, part_name):
+    """Remove an Override entry from [Content_Types].xml for the given PartName."""
+    ct_root = pf.get_xml("[Content_Types].xml")
+    NS_CT = "http://schemas.openxmlformats.org/package/2006/content-types"
+    for override in ct_root.findall(f"{{{NS_CT}}}Override"):
+        if override.get("PartName","").lstrip("/") == part_name.lstrip("/"):
+            ct_root.remove(override)
+            break
+    pf.set_xml("[Content_Types].xml", ct_root)
+
 def remove_slide_from_presentation(pf, slide_filename):
     prs_root = pf.get_xml("ppt/presentation.xml")
     prs_rels_root = pf.get_xml("ppt/_rels/presentation.xml.rels")
@@ -812,9 +825,12 @@ def remove_slide_from_presentation(pf, slide_filename):
                 pf.delete(f"ppt/charts/{chart_fname}"); pf.delete(f"ppt/charts/_rels/{chart_fname}.rels")
             elif "notesSlide" in rel_type:
                 notes_fname = os.path.basename(target)
-                pf.delete(f"ppt/notesSlides/{notes_fname}"); pf.delete(f"ppt/notesSlides/_rels/{notes_fname}.rels")
+                pf.delete(f"ppt/notesSlides/{notes_fname}")
+                pf.delete(f"ppt/notesSlides/_rels/{notes_fname}.rels")
+                _remove_content_type(pf, f"/ppt/notesSlides/{notes_fname}")
         pf.delete(slide_rels_path)
     pf.delete(f"ppt/slides/{slide_filename}")
+    _remove_content_type(pf, f"/ppt/slides/{slide_filename}")
     pf.set_xml("ppt/presentation.xml", prs_root)
     pf.set_xml("ppt/_rels/presentation.xml.rels", prs_rels_root)
 
@@ -938,23 +954,13 @@ def generate_ppt(excel_path, template_path, progress=None):
             remove_slide_from_presentation(pf, obs_slide)
             remove_slide_from_presentation(pf, tech_slide)
     update_cover(pf, info)
-    # Build keep set: all non-scenario slides (cover, appendix, etc.) + active tech slides only
-    all_scenario_slides = set(s for pair in SCENARIO_SLIDE_PAIRS for s in pair)
-    keep_slides = set(s for pair in SCENARIO_SLIDE_PAIRS for s in pair if s not in all_scenario_slides)
-    # Keep non-scenario slides (template slides outside the scenario pairs)
     keep_slides = set()
-    for tech_slide, obs_slide in SCENARIO_SLIDE_PAIRS:
-        pass  # scenario slides handled below
+    for tech_slide, _obs_slide in active_pairs[:n]:
+        keep_slides.add(tech_slide)
     prs_rels_root = pf.get_xml("ppt/_rels/presentation.xml.rels")
     rels_map = {r.get("Id"): r.get("Target","").split("/")[-1]
                 for r in prs_rels_root.findall(f"{{{NS_PKG}}}Relationship")
                 if "slide" in r.get("Type","") and "slideMaster" not in r.get("Type","") and "slideLayout" not in r.get("Type","")}
-    # Keep: non-scenario slides + active tech slides (obs slides are always removed)
-    for fname in rels_map.values():
-        if fname not in all_scenario_slides:
-            keep_slides.add(fname)  # cover, appendix, closing slides — always keep
-    for tech_slide, _obs_slide in active_pairs[:n]:
-        keep_slides.add(tech_slide)  # active scenario tech slides
     slides_to_remove = [fname for fname in rels_map.values() if fname not in keep_slides]
     for fname in slides_to_remove: remove_slide_from_presentation(pf, fname)
     log("Building presentation...")
