@@ -938,13 +938,23 @@ def generate_ppt(excel_path, template_path, progress=None):
             remove_slide_from_presentation(pf, obs_slide)
             remove_slide_from_presentation(pf, tech_slide)
     update_cover(pf, info)
+    # Build keep set: all non-scenario slides (cover, appendix, etc.) + active tech slides only
+    all_scenario_slides = set(s for pair in SCENARIO_SLIDE_PAIRS for s in pair)
+    keep_slides = set(s for pair in SCENARIO_SLIDE_PAIRS for s in pair if s not in all_scenario_slides)
+    # Keep non-scenario slides (template slides outside the scenario pairs)
     keep_slides = set()
-    for tech_slide, _obs_slide in active_pairs[:n]:
-        keep_slides.add(tech_slide)
+    for tech_slide, obs_slide in SCENARIO_SLIDE_PAIRS:
+        pass  # scenario slides handled below
     prs_rels_root = pf.get_xml("ppt/_rels/presentation.xml.rels")
     rels_map = {r.get("Id"): r.get("Target","").split("/")[-1]
                 for r in prs_rels_root.findall(f"{{{NS_PKG}}}Relationship")
                 if "slide" in r.get("Type","") and "slideMaster" not in r.get("Type","") and "slideLayout" not in r.get("Type","")}
+    # Keep: non-scenario slides + active tech slides (obs slides are always removed)
+    for fname in rels_map.values():
+        if fname not in all_scenario_slides:
+            keep_slides.add(fname)  # cover, appendix, closing slides — always keep
+    for tech_slide, _obs_slide in active_pairs[:n]:
+        keep_slides.add(tech_slide)  # active scenario tech slides
     slides_to_remove = [fname for fname in rels_map.values() if fname not in keep_slides]
     for fname in slides_to_remove: remove_slide_from_presentation(pf, fname)
     log("Building presentation...")
