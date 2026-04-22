@@ -805,6 +805,19 @@ def _remove_content_type(pf, part_name):
             break
     pf.set_xml("[Content_Types].xml", ct_root)
 
+def _add_content_type(pf, part_name, content_type):
+    """Add an Override entry to [Content_Types].xml if not already present."""
+    NS_CT = "http://schemas.openxmlformats.org/package/2006/content-types"
+    ct_root = pf.get_xml("[Content_Types].xml")
+    norm = "/" + part_name.lstrip("/")
+    for override in ct_root.findall(f"{{{NS_CT}}}Override"):
+        if override.get("PartName","") == norm:
+            return  # already registered
+    el = etree.SubElement(ct_root, f"{{{NS_CT}}}Override")
+    el.set("PartName", norm)
+    el.set("ContentType", content_type)
+    pf.set_xml("[Content_Types].xml", ct_root)
+
 def remove_slide_from_presentation(pf, slide_filename):
     prs_root = pf.get_xml("ppt/presentation.xml")
     prs_rels_root = pf.get_xml("ppt/_rels/presentation.xml.rels")
@@ -887,6 +900,13 @@ def duplicate_scenario_pair(pf, source_pair_idx, new_scenario_num, insert_before
     sldIdLst.insert(insert_pos, make_sld_id(max_id+1, new_rid_tech))
     pf.set_xml("ppt/presentation.xml", prs_root)
     pf.set_xml("ppt/_rels/presentation.xml.rels", prs_rels_root)
+    # Register all new parts in [Content_Types].xml (without this PowerPoint can't read the file)
+    CT_SLIDE  = "application/vnd.openxmlformats-officedocument.presentationml.slide+xml"
+    CT_CHART  = "application/vnd.openxmlformats-officedocument.drawingml.chart+xml"
+    _add_content_type(pf, f"/ppt/slides/{new_tech_name}", CT_SLIDE)
+    _add_content_type(pf, f"/ppt/slides/{new_obs_name}",  CT_SLIDE)
+    for cn in new_chart_names:
+        _add_content_type(pf, f"/ppt/charts/{cn}", CT_CHART)
     return new_tech_name, new_obs_name, new_chart_names
 
 def update_cover(pf, info):
